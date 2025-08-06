@@ -1,5 +1,7 @@
 # LogInspector
 
+[![Build status](https://ci.appveyor.com/api/projects/status/e5nyrytr736juvv5/branch/main?svg=true)](https://ci.appveyor.com/project/SebastianBecker2/loginspector/branch/main)
+
 Tool to inspect structured JSON formatted Serilog log files.
 
 Load one or more log files at the same time.
