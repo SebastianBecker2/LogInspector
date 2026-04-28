@@ -5,7 +5,9 @@ namespace LogInspector
     using System.Globalization;
     using System.Runtime.InteropServices;
     using System.Windows.Forms;
+    using System.Xml.Linq;
     using LogInspector.Properties;
+    using Newtonsoft.Json;
     using Newtonsoft.Json.Linq;
     using Serilog.Events;
     using Serilog.Parsing;
@@ -53,7 +55,7 @@ namespace LogInspector
             using var dlg = new OpenFileDialog
             {
                 Title = "Select Log Files",
-                Filter = "Log Files (*.log)|*.log|All Files (*.*)|*.*",
+                Filter = "Log Files (*.log;*.xml)|*.log;*.xml|All Files (*.*)|*.*",
                 Multiselect = true,
             };
 
@@ -63,92 +65,10 @@ namespace LogInspector
             }
 
             logEvents = [.. dlg.FileNames
-                .Select(ParseLogFile)
-                .SelectMany(logEvent => logEvent)];
+                .SelectMany(LogFileParser.ParseLogFile)];
 
             UpdateFilters(logEvents);
             UpdateLogEvents();
-        }
-
-        private static IEnumerable<CachedLogEvent> ParseLogFile(string file)
-        {
-            var parser = new MessageTemplateParser();
-
-            using var stream = new FileStream(
-                file,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.ReadWrite);
-            using var reader = new StreamReader(stream);
-
-            while (!reader.EndOfStream)
-            {
-                var line = reader.ReadLine();
-                if (line is null)
-                {
-                    continue;
-                }
-                var jObject = JObject.Parse(line);
-
-                var timestamp = jObject["Timestamp"]!.ToObject<DateTimeOffset>();
-                var level = Enum.Parse<LogEventLevel>(jObject["Level"]!.ToString());
-                var template = jObject["MessageTemplate"]!.ToString();
-                var messageTemplate = parser.Parse(template);
-                var exception = jObject["Exception"]?.ToString();
-
-                var properties = ParseProperties(jObject);
-
-                var logEvent = new LogEvent(
-                        timestamp,
-                        level,
-                        exception: null,
-                        messageTemplate,
-                        properties.ConvertAll(p => p.Value)
-                      );
-                yield return new CachedLogEvent(logEvent, exception);
-            }
-        }
-
-        private static List<KeyValuePair<string, LogEventProperty>> ParseProperties(
-            JObject jObject)
-        {
-            static ScalarValue ToScalarValue(JToken value) =>
-                new(value.Type switch
-                {
-                    JTokenType.Integer => value.ToObject<int>(),
-                    JTokenType.Float => value.ToObject<double>(),
-                    JTokenType.String => value.ToObject<string>(),
-                    JTokenType.Boolean => value.ToObject<bool>(),
-                    JTokenType.None => throw new NotImplementedException(),
-                    JTokenType.Object => throw new NotImplementedException(),
-                    JTokenType.Array => throw new NotImplementedException(),
-                    JTokenType.Constructor => throw new NotImplementedException(),
-                    JTokenType.Property => throw new NotImplementedException(),
-                    JTokenType.Comment => throw new NotImplementedException(),
-                    JTokenType.Null => throw new NotImplementedException(),
-                    JTokenType.Undefined => throw new NotImplementedException(),
-                    JTokenType.Date => throw new NotImplementedException(),
-                    JTokenType.Raw => throw new NotImplementedException(),
-                    JTokenType.Bytes => throw new NotImplementedException(),
-                    JTokenType.Guid => throw new NotImplementedException(),
-                    JTokenType.Uri => throw new NotImplementedException(),
-                    JTokenType.TimeSpan => throw new NotImplementedException(),
-                    _ => value.ToString()
-                });
-
-            if (jObject["Properties"] == null)
-            {
-                return [];
-            }
-
-            return [.. jObject["Properties"]!
-                .Children<JProperty>()
-                .Select(prop => new KeyValuePair<string, LogEventProperty>(
-                    prop.Name,
-                    new LogEventProperty(
-                        prop.Name,
-                        ToScalarValue(prop.Value))
-                ))];
         }
 
         private void DgvLogEvents_CellValueNeeded(
@@ -227,12 +147,16 @@ namespace LogInspector
 
                 CblMessageTemplate.Items.Clear();
                 CblMessageTemplate.Items.AddRange([.. logEvents
+                    .Where(logEvent => logEvent.HasMessageTemplate)
                     .Select(logEvent => logEvent.MessageTemplate.Text)
                     .Distinct()
                     .Cast<object>()]);
                 ShowHorizontalScrollbar(CblMessageTemplate);
                 AutoSizeHeight(CblMessageTemplate);
                 CheckAll(CblMessageTemplate);
+                var showMessageTemplate = CblMessageTemplate.Items.Count > 0;
+                CblMessageTemplate.Visible = showMessageTemplate;
+                label4.Visible = showMessageTemplate;
 
                 CblExceptions.Items.Clear();
                 CblExceptions.Items.AddRange([.. logEvents
@@ -341,7 +265,9 @@ namespace LogInspector
                     selectedLevels.Count == CblLevel.Items.Count
                     || selectedLevels.Contains($"{logEvent.Level}"))
                 .Where(logEvent =>
-                    selectedTemplates.Count == CblMessageTemplate.Items.Count
+                    !CblMessageTemplate.Visible
+                    || selectedTemplates.Count == CblMessageTemplate.Items.Count
+                    || !logEvent.HasMessageTemplate
                     || selectedTemplates.Contains($"{logEvent.MessageTemplate}"))
                 .Where(logEvent =>
                     logEvent.Message.Contains(

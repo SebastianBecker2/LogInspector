@@ -1,0 +1,2 @@
+<logEvent timestamp="2026-04-27 08:47:45.8723" level="Info" logger="DebugGui.Program" message="Starting DebugGui with version 0.4.8 and build 20260427064741 (0.4.8+build.20260427064741)"/>
+<logEvent timestamp="2026-04-27 08:47:47.0687" level="Warn" logger="DatabaseMigration" message="Database migration check: up to date, no pending migrations."/>

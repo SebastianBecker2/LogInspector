@@ -2,13 +2,14 @@ namespace LogInspector
 {
     using Serilog.Events;
 
-    public class CachedLogEvent(LogEvent logEvent, string? exception)
+    public class CachedLogEvent(LogEvent logEvent, string? exception, bool hasMessageTemplate = true)
     {
         private static readonly CustomSerilogFormatter CustomSerilogFormatter = new();
 
         public DateTimeOffset Timestamp => logEvent.Timestamp;
         public LogEventLevel Level => logEvent.Level;
         public MessageTemplate MessageTemplate => logEvent.MessageTemplate;
+        public bool HasMessageTemplate { get; } = hasMessageTemplate;
         public IReadOnlyDictionary<string, LogEventPropertyValue> Properties => logEvent.Properties;
         public string? Exception => exception;
         public string? ExceptionType => exception?[0..exception.IndexOf(':')].Trim();
