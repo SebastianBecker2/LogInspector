@@ -23,5 +23,21 @@ namespace LogInspector.Tests
             Assert.Equal(LogEventLevel.Warning, logEvents[1].Level);
             Assert.Equal("DatabaseMigration", CachedLogEvent.ToString(logEvents[1].Properties["logger"]));
         }
+
+        [Fact]
+        public void ParseSerilogLogFile_ParsesMessageTemplateAndProperties()
+        {
+            var logPath = Path.Combine(AppContext.BaseDirectory, "TestData", "serilog.log");
+            var logEvents = LogFileParser.ParseLogFile(logPath).ToList();
+
+            Assert.NotEmpty(logEvents);
+            var first = logEvents[0];
+
+            Assert.Equal(LogEventLevel.Information, first.Level);
+            Assert.True(first.HasMessageTemplate);
+            Assert.Equal("Application started. Version={Version} RunId={RunId} ProcessId={ProcessId} Machine={MachineName} OS={OSVersion} ExtendedLogging={ExtendedLogging} PreviousRunUnclean={PreviousRunUnclean}", first.MessageTemplate.Text);
+            Assert.Equal("1.2.8-rc4+02ba2783135d01fd56fb939a8b4a5eaeb699da22", CachedLogEvent.ToString(first.Properties["Version"]));
+            Assert.Equal("App.Started", CachedLogEvent.ToString(first.Properties["EventType"]));
+        }
     }
 }
