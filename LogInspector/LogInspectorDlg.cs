@@ -303,7 +303,7 @@ namespace LogInspector
 
             if (!GetScrollBarInfo(
                 clb.Handle,
-                ObjectIdentifiers.OBJID_HSCROLL,
+                (int)ObjectIdentifier.OBJID_HSCROLL,
                 ref sbInfo))
             {
                 return false;
