@@ -17,8 +17,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="TestData\log.xml">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    <None Update="TestData\nlog.xml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
 

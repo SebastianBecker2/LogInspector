@@ -11,7 +11,7 @@ namespace LogInspector.Tests
         [Fact]
         public void ParseXmlLogFile_MapsNLogShortLevelNames()
         {
-            var xmlPath = Path.Combine(AppContext.BaseDirectory, "TestData", "log.xml");
+            var xmlPath = Path.Combine(AppContext.BaseDirectory, "TestData", "nlog.xml");
             var logEvents = LogFileParser.ParseLogFile(xmlPath).ToList();
 
             Assert.Equal(2, logEvents.Count);
