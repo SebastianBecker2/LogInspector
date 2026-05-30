@@ -1,430 +1,646 @@
-namespace LogInspector
+namespace LogInspector;
+
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Globalization;
+using System.Windows.Forms;
+
+public partial class LogInspectorDlg : Form
 {
-    using System.Collections.Generic;
-    using System.Diagnostics;
-    using System.Globalization;
-    using System.Runtime.InteropServices;
-    using System.Windows.Forms;
-    using System.Xml.Linq;
-    using LogInspector.Properties;
-    using Newtonsoft.Json;
-    using Newtonsoft.Json.Linq;
-    using Serilog.Events;
-    using Serilog.Parsing;
-    using static Vanara.PInvoke.User32;
+    private ToolStripMenuItem? _darkModeMenuItem;
 
-    public partial class LogInspectorDlg : Form
+    private List<CachedLogEvent> filteredLogEvents = [];
+    private List<CachedLogEvent> logEvents = [];
+    private string[] loadedFiles = [];
+    private bool updatingFilters;
+    private readonly Dictionary<string, Dictionary<string, List<int>>> _filterIndex = [];
+    private static readonly Dictionary<string, CheckBoxList> KnownProperties = [];
+
+    public LogInspectorDlg()
     {
+        InitializeComponent();
 
-        private List<CachedLogEvent> filteredLogEvents = [];
-        private List<CachedLogEvent> logEvents = [];
-        private bool updatingFilters;
-        private static readonly Dictionary<string, CheckBoxList> KnownProperties = [];
-
-        public LogInspectorDlg()
+        void HandleItemCheck(
+            object? sender,
+            ItemCheckEventArgs e)
         {
-            InitializeComponent();
-
-            void HandleItemCheck(
-                object? sender,
-                ItemCheckEventArgs e)
-            {
-                var cbl = sender as CheckedListBox
-                    ?? throw new InvalidOperationException("Invalid sender");
-                UpdateCheckedItems(cbl, e);
-                UpdateLogEvents();
-            }
-
-            CmbStartDate.SelectedIndexChanged += (s, e) => UpdateLogEvents();
-            DtpStartTime.ValueChanged += (s, e) => UpdateLogEvents();
-            CmbEndDate.SelectedIndexChanged += (s, e) => UpdateLogEvents();
-            DtpEndTime.ValueChanged += (s, e) => UpdateLogEvents();
-            CblLevel.ItemCheck += HandleItemCheck;
-            CblMessageTemplate.ItemCheck += HandleItemCheck;
-            TxtMessage.TextChanged += (s, e) => UpdateLogEvents();
-
-            Shown += (s, e) => LoadLogFilesToolStripMenuItem.PerformClick();
-        }
-        private void ExitToolStripMenuItem_Click(object sender, EventArgs e) =>
-            Application.Exit();
-
-        private void LoadLogFilesToolStripMenuItem_Click(
-            object sender,
-            EventArgs e)
-        {
-            using var dlg = new OpenFileDialog
-            {
-                Title = "Select Log Files",
-                Filter = "Log Files (*.log;*.xml)|*.log;*.xml|All Files (*.*)|*.*",
-                Multiselect = true,
-            };
-
-            if (dlg.ShowDialog() != DialogResult.OK)
-            {
-                return;
-            }
-
-            logEvents = [.. dlg.FileNames
-                .SelectMany(LogFileParser.ParseLogFile)];
-
-            UpdateFilters(logEvents);
+            var cbl = sender as CheckedListBox
+                ?? throw new InvalidOperationException("Invalid sender");
+            UpdateCheckedItems(cbl, e);
             UpdateLogEvents();
         }
 
-        private void DgvLogEvents_CellValueNeeded(
-            object sender,
-            DataGridViewCellValueEventArgs e)
+        CmbStartDate.SelectedIndexChanged += (s, e) => UpdateLogEvents();
+        DtpStartTime.ValueChanged += (s, e) => UpdateLogEvents();
+        CmbEndDate.SelectedIndexChanged += (s, e) => UpdateLogEvents();
+        DtpEndTime.ValueChanged += (s, e) => UpdateLogEvents();
+        CblLevel.ItemCheck += HandleItemCheck;
+        CblMessageTemplate.ItemCheck += HandleItemCheck;
+        TxtMessage.TextChanged += (s, e) => UpdateLogEvents();
+
+        ConfigureStaticFilterLists();
+        ConfigureLogEventsGrid();
+        ConfigureThemeMenu();
+
+        Shown += (s, e) => LoadLogFilesToolStripMenuItem.PerformClick();
+    }
+
+    private void ConfigureThemeMenu()
+    {
+        viewToolStripMenuItem.DropDownItems.Add(new ToolStripSeparator());
+        _darkModeMenuItem = new ToolStripMenuItem("Dark Mode")
         {
-            if (filteredLogEvents is null
-                || e.RowIndex >= filteredLogEvents.Count)
-            {
-                return;
-            }
+            CheckOnClick = true,
+            Checked = LogInspectorTheme.IsDarkMode,
+        };
+        _darkModeMenuItem.Click += (_, _) =>
+            LogInspectorTheme.SetDarkMode(_darkModeMenuItem.Checked, this);
+        viewToolStripMenuItem.DropDownItems.Add(_darkModeMenuItem);
+        LogInspectorTheme.Apply(this);
+    }
 
-            var logEvent = filteredLogEvents[e.RowIndex];
-            var key = DgvLogEvents.Columns[e.ColumnIndex].HeaderText;
+    private void ConfigureLogEventsGrid()
+    {
+        var copyMenuItem = new ToolStripMenuItem(
+            "Copy to Clipboard",
+            null,
+            (_, _) => CopySelectedLogEventsToClipboard());
+        var contextMenu = new ContextMenuStrip();
+        contextMenu.Items.Add(copyMenuItem);
+        contextMenu.Opening += (_, e) =>
+        {
+            if (DgvLogEvents.SelectedRows.Count == 0)
+            {
+                e.Cancel = true;
+            }
+        };
+        DgvLogEvents.ContextMenuStrip = contextMenu;
+        LogInspectorTheme.Apply(contextMenu);
+    }
 
-            if (key == "Timestamp")
+    private void CopySelectedLogEventsToClipboard()
+    {
+        var selected = CaptureSelectedLogEvents();
+
+        if (selected.Count == 0)
+        {
+            return;
+        }
+
+        Clipboard.SetText(LogEventJson.SerializeMany(selected));
+    }
+
+    private List<CachedLogEvent> CaptureSelectedLogEvents()
+    {
+        if (filteredLogEvents.Count == 0 || DgvLogEvents.SelectedRows.Count == 0)
+        {
+            return [];
+        }
+
+        return DgvLogEvents.SelectedRows
+            .Cast<DataGridViewRow>()
+            .Select(row => row.Index)
+            .Where(index => index >= 0 && index < filteredLogEvents.Count)
+            .OrderBy(index => index)
+            .Select(index => filteredLogEvents[index])
+            .ToList();
+    }
+
+    private void RestoreSelectionAndScroll(List<CachedLogEvent> previouslySelected)
+    {
+        if (previouslySelected.Count == 0 || filteredLogEvents.Count == 0)
+        {
+            return;
+        }
+
+        var indicesToSelect = new List<int>();
+        foreach (var selected in previouslySelected)
+        {
+            var index = filteredLogEvents.IndexOf(selected);
+            if (index >= 0)
             {
-                e.Value = $"{logEvent.Timestamp:yyyy-MM-dd HH:mm:ss.fff}";
-                return;
-            }
-            else if (key == "Level")
-            {
-                e.Value = logEvent.Level;
-                return;
-            }
-            else if (key == "Message")
-            {
-                e.Value = logEvent.Message;
-                return;
+                indicesToSelect.Add(index);
             }
         }
 
-        private void UpdateFilters(IEnumerable<CachedLogEvent> logEvents)
+        if (indicesToSelect.Count == 0)
         {
-            updatingFilters = true;
-
-            try
-            {
-                var dates = logEvents
-                    .Select(logEvent => logEvent.Timestamp.Date)
-                    .Distinct()
-                    .OrderBy(date => date)
-                    .Select(date => $"{date:yyyy-MM-dd}")
-                    .ToArray();
-                CmbStartDate.Items.Clear();
-                CmbStartDate.Items.AddRange(dates);
-                CmbStartDate.SelectedIndex = 0;
-                CmbEndDate.Items.Clear();
-                CmbEndDate.Items.AddRange(dates);
-                CmbEndDate.SelectedIndex = dates.Length - 1;
-
-                // First set MaxDate to set MinDate freely.
-                DtpStartTime.MaxDate = DateTimePicker.MaximumDateTime;
-                DtpStartTime.MinDate = logEvents
-                    .Min(logEvent => logEvent.Timestamp.DateTime);
-                DtpStartTime.MaxDate = DtpStartTime.MinDate.Date
-                    .AddDays(1)
-                    .AddTicks(-1);
-                DtpStartTime.Value = DtpStartTime.MinDate;
-
-                // First reset MinDate to set MaxDate freely.
-                DtpEndTime.MinDate = DateTimePicker.MinimumDateTime;
-                DtpEndTime.MaxDate = logEvents
-                    .Max(logEvent => logEvent.Timestamp.DateTime);
-                DtpEndTime.MinDate = DtpStartTime.MaxDate.Date;
-                DtpEndTime.Value = DtpEndTime.MaxDate;
-
-                CblLevel.Items.Clear();
-                CblLevel.Items.AddRange([.. logEvents
-                    .Select(logEvent => logEvent.Level)
-                    .Distinct()
-                    .Cast<object>()]);
-                ShowHorizontalScrollbar(CblLevel);
-                AutoSizeHeight(CblLevel);
-                CheckAll(CblLevel);
-
-                CblMessageTemplate.Items.Clear();
-                CblMessageTemplate.Items.AddRange([.. logEvents
-                    .Where(logEvent => logEvent.HasMessageTemplate)
-                    .Select(logEvent => logEvent.MessageTemplate.Text)
-                    .Distinct()
-                    .Cast<object>()]);
-                ShowHorizontalScrollbar(CblMessageTemplate);
-                AutoSizeHeight(CblMessageTemplate);
-                CheckAll(CblMessageTemplate);
-                var showMessageTemplate = CblMessageTemplate.Items.Count > 0;
-                CblMessageTemplate.Visible = showMessageTemplate;
-                label4.Visible = showMessageTemplate;
-
-                CblExceptions.Items.Clear();
-                CblExceptions.Items.AddRange([.. logEvents
-                    .Where(logEvent => logEvent.ExceptionType is not null)
-                    .Select(logEvent => logEvent.ExceptionType!)
-                    .Distinct()
-                    .OrderBy(name => name)
-                    .ToArray()]);
-                ShowHorizontalScrollbar(CblExceptions);
-                AutoSizeHeight(CblExceptions);
-                CheckAll(CblExceptions);
-                CblExceptions.Visible = CblExceptions.Items.Count > 0;
-                LblExceptions.Visible = CblExceptions.Visible;
-
-                UpdatePropertyFilters(logEvents);
-            }
-            finally
-            {
-                updatingFilters = false;
-            }
+            return;
         }
 
-        private void UpdatePropertyFilters(IEnumerable<CachedLogEvent> logEvents)
+        DgvLogEvents.ClearSelection();
+        foreach (var index in indicesToSelect)
         {
-            TlpProperties.Controls.Clear();
-            TlpProperties.ColumnCount = 0;
-            TlpProperties.ColumnStyles.Clear();
-            foreach (var ctrl in KnownProperties.Values)
-            {
-                ctrl.Dispose();
-            }
-            KnownProperties.Clear();
+            DgvLogEvents.Rows[index].Selected = true;
+        }
 
-            foreach (var prop in logEvents
-                .SelectMany(logEvent => logEvent.Properties)
-                .DistinctBy(p => new { p.Key, p.Value }))
+        DgvLogEvents.FirstDisplayedScrollingRowIndex = indicesToSelect[0];
+    }
+
+    private void ConfigureStaticFilterLists()
+    {
+        ApplyFilterListLayout(CblLevel);
+        ApplyFilterListLayout(CblMessageTemplate);
+        ApplyFilterListLayout(CblExceptions);
+    }
+    private void ExitToolStripMenuItem_Click(object sender, EventArgs e) =>
+        Application.Exit();
+
+    private void LoadLogFilesToolStripMenuItem_Click(
+        object sender,
+        EventArgs e)
+    {
+        using var dlg = new OpenFileDialog
+        {
+            Title = "Select Log Files",
+            Filter = "Log Files (*.log;*.xml)|*.log;*.xml|All Files (*.*)|*.*",
+            Multiselect = true,
+        };
+
+        if (dlg.ShowDialog() != DialogResult.OK)
+        {
+            return;
+        }
+
+        loadedFiles = dlg.FileNames;
+        ReloadCurrentLogFiles();
+    }
+
+    private void ReloadCurrentLogFilesToolStripMenuItem_Click(
+        object sender,
+        EventArgs e)
+    {
+        if (loadedFiles.Length == 0)
+        {
+            LoadLogFilesToolStripMenuItem.PerformClick();
+            return;
+        }
+
+        ReloadCurrentLogFiles();
+    }
+
+    private void DgvLogEvents_CellValueNeeded(
+        object sender,
+        DataGridViewCellValueEventArgs e)
+    {
+        if (filteredLogEvents is null
+            || e.RowIndex >= filteredLogEvents.Count)
+        {
+            return;
+        }
+
+        var logEvent = filteredLogEvents[e.RowIndex];
+        var key = DgvLogEvents.Columns[e.ColumnIndex].HeaderText;
+
+        if (key == "Timestamp")
+        {
+            e.Value = $"{logEvent.Timestamp:yyyy-MM-dd HH:mm:ss.fff}";
+            return;
+        }
+        else if (key == "Level")
+        {
+            e.Value = logEvent.Level;
+            return;
+        }
+        else if (key == "Logger")
+        {
+            e.Value = logEvent.LoggerName;
+            return;
+        }
+        else if (key == "Message")
+        {
+            e.Value = logEvent.Message;
+            return;
+        }
+    }
+
+    private void ReloadCurrentLogFiles()
+    {
+        logEvents = [.. loadedFiles
+            .SelectMany(LogFileParser.ParseLogFile)
+            .OrderByDescending(logEvent => logEvent.Timestamp)];
+        BuildFilterIndex();
+        UpdateFilters(logEvents);
+        UpdateLogEvents();
+    }
+
+    private void BuildFilterIndex()
+    {
+        _filterIndex.Clear();
+
+        for (var i = 0; i < logEvents.Count; i++)
+        {
+            var logEvent = logEvents[i];
+            AddToIndex("Level", $"{logEvent.Level}", i);
+
+            if (logEvent.HasMessageTemplate)
             {
-                if (!KnownProperties.TryGetValue(prop.Key, out var cbl))
+                AddToIndex("MessageTemplate", $"{logEvent.MessageTemplate}", i);
+            }
+
+            if (!string.IsNullOrEmpty(logEvent.ExceptionType))
+            {
+                AddToIndex("Exception", logEvent.ExceptionType!, i);
+            }
+
+            if (!string.IsNullOrEmpty(logEvent.LoggerName))
+            {
+                AddToIndex("Logger", logEvent.LoggerName, i);
+            }
+
+            foreach (var (key, value) in logEvent.Properties)
+            {
+                var normalizedKey = NormalizeFilterPropertyName(key);
+                if (normalizedKey == "Logger")
                 {
-                    _ = TlpProperties.ColumnStyles.Add(
-                        new ColumnStyle(SizeType.AutoSize));
-                    TlpProperties.Controls.Add(
-                        new Label
-                        {
-                            Text = prop.Key,
-                        },
-                        KnownProperties.Count,
-                        0);
-                    cbl = new CheckBoxList
-                    {
-                        CheckOnClick = true,
-                    };
-                    cbl.ItemCheck += (s, e) =>
-                    {
-                        UpdateCheckedItems(cbl, e);
-                        UpdateLogEvents();
-                    };
-                    TlpProperties.Controls.Add(cbl, KnownProperties.Count, 1);
-
-                    KnownProperties.Add(prop.Key, cbl);
+                    continue;
                 }
 
-                var val = CachedLogEvent.ToString(prop.Value);
-                _ = cbl.Items.Add(val);
-            }
-
-            foreach (var cbl in TlpProperties.Controls
-                .Cast<Control>()
-                .Select(c => c as CheckBoxList)
-                .Where(c => c is not null))
-            {
-                AutoSizeWidth(cbl!);
-                ShowHorizontalScrollbar(cbl!);
-                AutoSizeHeight(cbl!);
-                CheckAll(cbl!);
+                AddToIndex(normalizedKey, CachedLogEvent.ToString(value), i);
             }
         }
+    }
 
-        private void UpdateLogEvents()
+    private void AddToIndex(string key, string value, int index)
+    {
+        if (!_filterIndex.TryGetValue(key, out var valueMap))
         {
-            if (updatingFilters)
+            valueMap = new Dictionary<string, List<int>>();
+            _filterIndex[key] = valueMap;
+        }
+
+        if (!valueMap.TryGetValue(value, out var indices))
+        {
+            indices = [];
+            valueMap[value] = indices;
+        }
+
+        indices.Add(index);
+    }
+
+    private void UpdateFilters(IEnumerable<CachedLogEvent> logEvents)
+    {
+        updatingFilters = true;
+
+        try
+        {
+            var dates = logEvents
+                .Select(logEvent => logEvent.Timestamp.Date)
+                .Distinct()
+                .OrderBy(date => date)
+                .Select(date => $"{date:yyyy-MM-dd}")
+                .ToArray();
+            CmbStartDate.Items.Clear();
+            CmbStartDate.Items.AddRange(dates);
+            CmbStartDate.SelectedIndex = 0;
+            CmbEndDate.Items.Clear();
+            CmbEndDate.Items.AddRange(dates);
+            CmbEndDate.SelectedIndex = dates.Length - 1;
+
+            // First set MaxDate to set MinDate freely.
+            DtpStartTime.MaxDate = DateTimePicker.MaximumDateTime;
+            DtpStartTime.MinDate = logEvents
+                .Min(logEvent => logEvent.Timestamp.DateTime);
+            DtpStartTime.MaxDate = DtpStartTime.MinDate.Date
+                .AddDays(1)
+                .AddTicks(-1);
+            DtpStartTime.Value = DtpStartTime.MinDate;
+
+            // First reset MinDate to set MaxDate freely.
+            DtpEndTime.MinDate = DateTimePicker.MinimumDateTime;
+            DtpEndTime.MaxDate = logEvents
+                .Max(logEvent => logEvent.Timestamp.DateTime);
+            DtpEndTime.MinDate = DtpStartTime.MaxDate.Date;
+            DtpEndTime.Value = DtpEndTime.MaxDate;
+
+            CblLevel.Items.Clear();
+            CblLevel.Items.AddRange([.. (_filterIndex.TryGetValue("Level", out var levelValues)
+                ? levelValues.Keys
+                : Enumerable.Empty<string>())
+                .Cast<object>()]);
+            ApplyFilterListLayout(CblLevel);
+            CheckAll(CblLevel);
+
+            CblMessageTemplate.Items.Clear();
+            CblMessageTemplate.Items.AddRange([.. (_filterIndex.TryGetValue("MessageTemplate", out var templateValues)
+                ? templateValues.Keys
+                : Enumerable.Empty<string>())
+                .Cast<object>()]);
+            ApplyFilterListLayout(CblMessageTemplate);
+            CheckAll(CblMessageTemplate);
+            var showMessageTemplate = CblMessageTemplate.Items.Count > 0;
+            CblMessageTemplate.Visible = showMessageTemplate;
+            label4.Visible = showMessageTemplate;
+
+            CblExceptions.Items.Clear();
+            CblExceptions.Items.AddRange([.. (_filterIndex.TryGetValue("Exception", out var exceptionValues)
+                ? exceptionValues.Keys.OrderBy(name => name).ToArray()
+                : [])]);
+            ApplyFilterListLayout(CblExceptions);
+            CheckAll(CblExceptions);
+            CblExceptions.Visible = CblExceptions.Items.Count > 0;
+            LblExceptions.Visible = CblExceptions.Visible;
+
+            UpdatePropertyFilters(logEvents);
+        }
+        finally
+        {
+            updatingFilters = false;
+        }
+    }
+
+    private void UpdatePropertyFilters(IEnumerable<CachedLogEvent> logEvents)
+    {
+        TlpProperties.Controls.Clear();
+        TlpProperties.ColumnCount = 0;
+        TlpProperties.ColumnStyles.Clear();
+        foreach (var ctrl in KnownProperties.Values)
+        {
+            ctrl.Dispose();
+        }
+        KnownProperties.Clear();
+
+        foreach (var (propName, values) in _filterIndex
+            .Where(kvp => kvp.Key is not "Level" and not "MessageTemplate" and not "Exception")
+            .OrderBy(kvp => kvp.Key))
+        {
+            if (!KnownProperties.TryGetValue(propName, out var cbl))
             {
-                return;
-            }
-            if (logEvents.Count == 0)
-            {
-                DgvLogEvents.Rows.Clear();
-                LblEventCount.Text = "No log events to display.";
-                return;
-            }
+                _ = TlpProperties.ColumnStyles.Add(
+                    new ColumnStyle(SizeType.AutoSize));
+                TlpProperties.Controls.Add(
+                    new Label
+                    {
+                        Text = propName,
+                    },
+                    KnownProperties.Count,
+                    0);
+                cbl = new CheckBoxList
+                {
+                    CheckOnClick = true,
+                };
+                cbl.ItemCheck += (s, e) =>
+                {
+                    UpdateCheckedItems(cbl, e);
+                    UpdateLogEvents();
+                };
+                TlpProperties.Controls.Add(cbl, KnownProperties.Count, 1);
 
-            var t = Stopwatch.StartNew();
-            var minDate = DateTime
-                .Parse(CmbStartDate.Text, CultureInfo.InvariantCulture)
-                .Add(DtpStartTime.Value.TimeOfDay);
-            var maxDate = DateTime
-                .Parse(CmbEndDate.Text, CultureInfo.InvariantCulture)
-                .Add(DtpEndTime.Value.TimeOfDay);
-            var selectedLevels = CblLevel.Tag as HashSet<string> ?? [];
-            var selectedTemplates = CblMessageTemplate.Tag as HashSet<string> ?? [];
-            var filtered = logEvents
-                .Where(logEvent =>
-                    logEvent.Timestamp >= minDate
-                    && logEvent.Timestamp <= maxDate)
-                .Where(logEvent =>
-                    selectedLevels.Count == CblLevel.Items.Count
-                    || selectedLevels.Contains($"{logEvent.Level}"))
-                .Where(logEvent =>
-                    !CblMessageTemplate.Visible
-                    || selectedTemplates.Count == CblMessageTemplate.Items.Count
-                    || !logEvent.HasMessageTemplate
-                    || selectedTemplates.Contains($"{logEvent.MessageTemplate}"))
-                .Where(logEvent =>
-                    logEvent.Message.Contains(
-                        TxtMessage.Text,
-                        StringComparison.OrdinalIgnoreCase));
-
-            foreach (var (name, cbl) in KnownProperties)
-            {
-                var values = cbl.Tag as HashSet<string> ?? [];
-                filtered = filtered.Where(logEvents =>
-                    values.Count == cbl.Items.Count
-                    || !logEvents.Properties.TryGetValue(name, out var value)
-                    || values.Contains(CachedLogEvent.ToString(value)));
+                KnownProperties.Add(propName, cbl);
             }
 
-            filteredLogEvents = [.. filtered];
+            cbl.Items.Clear();
+            cbl.Items.AddRange([.. values.Keys.Cast<object>()]);
+        }
 
-            DgvLogEvents.SuspendLayout();
+        foreach (var cbl in TlpProperties.Controls
+            .Cast<Control>()
+            .Select(c => c as CheckBoxList)
+            .Where(c => c is not null))
+        {
+            ApplyFilterListLayout(cbl!);
+            CheckAll(cbl!);
+        }
+
+        TlpProperties.PerformLayout();
+        TlpFilters.PerformLayout();
+        LogInspectorTheme.Apply(TlpProperties);
+    }
+
+    private void UpdateLogEvents()
+    {
+        if (updatingFilters)
+        {
+            return;
+        }
+        if (logEvents.Count == 0)
+        {
             DgvLogEvents.Rows.Clear();
-            DgvLogEvents.RowCount = filteredLogEvents.Count;
-            DgvLogEvents.ResumeLayout();
-
-            LblEventCount.Text = $"Filtered {logEvents.Count} log events to " +
-                $"{filteredLogEvents.Count} in {t.ElapsedMilliseconds} ms";
+            LblEventCount.Text = "No log events to display.";
+            return;
         }
 
-        private static bool IsShowingHorizontalScrollbar(CheckedListBox clb)
-        {
-            var sbInfo = new SCROLLBARINFO
-            {
-                cbSize = (uint)Marshal.SizeOf(typeof(SCROLLBARINFO))
-            };
+        var previouslySelected = CaptureSelectedLogEvents();
 
-            if (!GetScrollBarInfo(
-                clb.Handle,
-                (int)ObjectIdentifier.OBJID_HSCROLL,
-                ref sbInfo))
+        var t = Stopwatch.StartNew();
+        var minDate = DateTime
+            .Parse(CmbStartDate.Text, CultureInfo.InvariantCulture)
+            .Add(DtpStartTime.Value.TimeOfDay);
+        var maxDate = DateTime
+            .Parse(CmbEndDate.Text, CultureInfo.InvariantCulture)
+            .Add(DtpEndTime.Value.TimeOfDay);
+        var selectedLevels = CblLevel.Tag as HashSet<string> ?? [];
+        var selectedTemplates = CblMessageTemplate.Tag as HashSet<string> ?? [];
+        var messageSearch = TxtMessage.Text;
+        var hasMessageSearch = !string.IsNullOrWhiteSpace(messageSearch);
+        var allowedByIndex = BuildAllowedByIndex(
+            selectedLevels,
+            selectedTemplates);
+
+        var filtered = new List<CachedLogEvent>(logEvents.Count);
+        for (var i = 0; i < logEvents.Count; i++)
+        {
+            if (allowedByIndex is not null
+                && !allowedByIndex[i])
             {
-                return false;
+                continue;
             }
 
-            return (sbInfo.rgstate[(int)SB.SB_HORZ]
-                & (uint)ComboBoxInfoState.STATE_SYSTEM_INVISIBLE)
-                == 0;
-        }
-
-        private static void AutoSizeHeight(CheckedListBox clb)
-        {
-            var countOffset = IsShowingHorizontalScrollbar(clb) ? 1 : 0;
-            clb.Height = (clb.ItemHeight
-                * Math.Max(clb.Items.Count + countOffset, 1))
-                + 4;
-        }
-
-        private static void AutoSizeWidth(CheckedListBox clb)
-        {
-            // Ignores the longest x% of items when calculating width.
-            // To avoid outliers skewing the width calculation.
-            var percentile = 0.90f;
-
-            var widths = new List<float>();
-            using var g = clb.CreateGraphics();
-            foreach (var item in clb.Items)
+            var logEvent = logEvents[i];
+            if (logEvent.Timestamp < minDate
+                || logEvent.Timestamp > maxDate)
             {
-                var size = g.MeasureString(item.ToString(), clb.Font);
-                widths.Add(size.Width);
+                continue;
+            }
+            if (hasMessageSearch
+                && !logEvent.Message.Contains(
+                    messageSearch,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+            filtered.Add(logEvent);
+        }
+
+        filteredLogEvents = filtered;
+
+        DgvLogEvents.SuspendLayout();
+        DgvLogEvents.RowCount = 0;
+        DgvLogEvents.RowCount = filteredLogEvents.Count;
+        RestoreSelectionAndScroll(previouslySelected);
+        DgvLogEvents.ResumeLayout();
+        DgvLogEvents.Invalidate();
+        DgvLogEvents.Update();
+
+        LblEventCount.Text = $"Filtered {logEvents.Count} log events to " +
+            $"{filteredLogEvents.Count} in {t.ElapsedMilliseconds} ms";
+    }
+
+    private bool[]? BuildAllowedByIndex(HashSet<string> selectedLevels, HashSet<string> selectedTemplates)
+    {
+        bool[]? allowed = null;
+        ApplyIndexFilter("Level", selectedLevels, CblLevel.Items.Count, ref allowed);
+
+        if (CblMessageTemplate.Visible)
+        {
+            ApplyIndexFilter("MessageTemplate", selectedTemplates, CblMessageTemplate.Items.Count, ref allowed);
+        }
+
+        foreach (var (name, cbl) in KnownProperties)
+        {
+            var selected = cbl.Tag as HashSet<string> ?? [];
+            ApplyIndexFilter(name, selected, cbl.Items.Count, ref allowed);
+        }
+
+        return allowed;
+    }
+
+    private void ApplyIndexFilter(
+        string filterName,
+        HashSet<string> selectedValues,
+        int totalValues,
+        ref bool[]? allowed)
+    {
+        if (totalValues == 0
+            || selectedValues.Count == totalValues
+            || !_filterIndex.TryGetValue(filterName, out var valueMap))
+        {
+            return;
+        }
+
+        var current = new bool[logEvents.Count];
+        foreach (var selected in selectedValues)
+        {
+            if (!valueMap.TryGetValue(selected, out var indices))
+            {
+                continue;
             }
 
-            if (widths.Count == 0)
+            foreach (var index in indices)
             {
-                return;
+                current[index] = true;
             }
-
-            widths.Sort(); // Ascending
-
-            var index = (int)(percentile * widths.Count);
-            var chosenWidth = widths[Math.Min(index, widths.Count - 1)];
-
-            // Add scrollbar + padding
-            clb.Width = (int)chosenWidth
-                + SystemInformation.VerticalScrollBarWidth
-                + 25;
         }
 
-        private static void UpdateCheckedItems(
-            CheckedListBox clb,
-            ItemCheckEventArgs e)
+        if (allowed is null)
         {
-            var checkedItems = clb.Tag as HashSet<string> ?? [];
-            var item = clb.Items[e.Index].ToString() ?? "";
-            if (e.NewValue == CheckState.Checked)
-            {
-                _ = checkedItems.Add(item);
-            }
-            else if (e.NewValue == CheckState.Unchecked)
-            {
-                _ = checkedItems.Remove(item);
-            }
-            clb.Tag = checkedItems;
+            allowed = current;
+            return;
         }
 
-        private static void CheckAll(CheckedListBox clb)
+        for (var i = 0; i < allowed.Length; i++)
         {
-            HashSet<string> checkedItems = [];
-            foreach (var i in Enumerable.Range(0, clb.Items.Count))
-            {
-                clb.SetItemChecked(i, true);
-                _ = checkedItems.Add(clb.Items[i].ToString() ?? "");
-            }
-            clb.Tag = checkedItems;
+            allowed[i] = allowed[i] && current[i];
         }
+    }
 
-        private static void ShowHorizontalScrollbar(CheckedListBox clb)
+    private static string NormalizeFilterPropertyName(string propertyName) =>
+        propertyName is "SourceContext" or "LoggerName" or "logger"
+            ? "Logger"
+            : propertyName;
+
+    private static void ApplyFilterListLayout(CheckedListBox clb)
+    {
+        clb.Dock = DockStyle.Fill;
+        clb.IntegralHeight = false;
+        clb.MinimumSize = new Size(CalculatePreferredFilterListWidth(clb), 0);
+        ShowHorizontalScrollbar(clb);
+    }
+
+    private static int CalculatePreferredFilterListWidth(CheckedListBox clb)
+    {
+        // Ignores the longest x% of items when calculating width.
+        // To avoid outliers skewing the width calculation.
+        var percentile = 0.90f;
+
+        var widths = new List<float>();
+        using var g = clb.CreateGraphics();
+        foreach (var item in clb.Items)
         {
-            clb!.HorizontalScrollbar = true;
-            clb.IntegralHeight = false;
-
-            var maxItemWidth = 0;
-            using var g = clb.CreateGraphics();
-            foreach (var item in clb.Items)
-            {
-                var size = g.MeasureString(item.ToString(), clb.Font);
-                if (size.Width > maxItemWidth)
-                {
-                    maxItemWidth = (int)size.Width;
-                }
-            }
-            clb.HorizontalExtent = maxItemWidth + 20;
+            var size = g.MeasureString(item.ToString(), clb.Font);
+            widths.Add(size.Width);
         }
 
-        private void ShowFiltersToolStripMenuItem_Click(
-            object sender,
-            EventArgs e) =>
-            SctSplitter.Panel1Collapsed = false;
-
-        private void HideFiltersToolStripMenuItem_Click(
-            object sender,
-            EventArgs e) =>
-            SctSplitter.Panel1Collapsed = true;
-
-        private void DgvLogEvents_CellDoubleClick(
-            object? sender,
-            DataGridViewCellEventArgs e)
+        if (widths.Count == 0)
         {
-            if (e.RowIndex < 0 || filteredLogEvents.Count == 0)
-            {
-                return;
-            }
-            using var dlg = new DetailsDlg();
-            dlg.LogEvent = filteredLogEvents[e.RowIndex];
-            _ = dlg.ShowDialog();
+            return 120;
         }
 
-        private void ToolStripMenuItem1_Click(object sender, EventArgs e)
+        widths.Sort(); // Ascending
+
+        var index = (int)(percentile * widths.Count);
+        var chosenWidth = widths[Math.Min(index, widths.Count - 1)];
+
+        return (int)chosenWidth
+            + SystemInformation.VerticalScrollBarWidth
+            + 25;
+    }
+
+    private static void UpdateCheckedItems(
+        CheckedListBox clb,
+        ItemCheckEventArgs e)
+    {
+        var checkedItems = clb.Tag as HashSet<string> ?? [];
+        var item = clb.Items[e.Index].ToString() ?? "";
+        if (e.NewValue == CheckState.Checked)
         {
-            using var dlg = new AboutBox1();
-            _ = dlg.ShowDialog(this);
+            _ = checkedItems.Add(item);
         }
+        else if (e.NewValue == CheckState.Unchecked)
+        {
+            _ = checkedItems.Remove(item);
+        }
+        clb.Tag = checkedItems;
+    }
+
+    private static void CheckAll(CheckedListBox clb)
+    {
+        HashSet<string> checkedItems = [];
+        foreach (var i in Enumerable.Range(0, clb.Items.Count))
+        {
+            clb.SetItemChecked(i, true);
+            _ = checkedItems.Add(clb.Items[i].ToString() ?? "");
+        }
+        clb.Tag = checkedItems;
+    }
+
+    private static void ShowHorizontalScrollbar(CheckedListBox clb)
+    {
+        clb.HorizontalScrollbar = true;
+
+        var maxItemWidth = 0;
+        using var g = clb.CreateGraphics();
+        foreach (var item in clb.Items)
+        {
+            var size = g.MeasureString(item.ToString(), clb.Font);
+            if (size.Width > maxItemWidth)
+            {
+                maxItemWidth = (int)size.Width;
+            }
+        }
+        clb.HorizontalExtent = maxItemWidth + 20;
+    }
+
+    private void ShowFiltersToolStripMenuItem_Click(
+        object sender,
+        EventArgs e) =>
+        SctSplitter.Panel1Collapsed = false;
+
+    private void HideFiltersToolStripMenuItem_Click(
+        object sender,
+        EventArgs e) =>
+        SctSplitter.Panel1Collapsed = true;
+
+    private void DgvLogEvents_CellDoubleClick(
+        object? sender,
+        DataGridViewCellEventArgs e)
+    {
+        if (e.RowIndex < 0 || filteredLogEvents.Count == 0)
+        {
+            return;
+        }
+        using var dlg = new DetailsDlg();
+        dlg.LogEvent = filteredLogEvents[e.RowIndex];
+        _ = dlg.ShowDialog();
     }
 }

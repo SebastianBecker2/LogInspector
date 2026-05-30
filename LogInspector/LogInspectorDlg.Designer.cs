@@ -1,5 +1,7 @@
 namespace LogInspector
 {
+    using System.Windows.Forms;
+
     partial class LogInspectorDlg
     {
         /// <summary>
@@ -31,15 +33,12 @@ namespace LogInspector
             menuStrip1 = new MenuStrip();
             fileToolStripMenuItem = new ToolStripMenuItem();
             LoadLogFilesToolStripMenuItem = new ToolStripMenuItem();
+            ReloadCurrentLogFilesToolStripMenuItem = new ToolStripMenuItem();
             ExitToolStripMenuItem = new ToolStripMenuItem();
             viewToolStripMenuItem = new ToolStripMenuItem();
             showFiltersToolStripMenuItem = new ToolStripMenuItem();
             hideFiltersToolStripMenuItem = new ToolStripMenuItem();
-            toolStripMenuItem1 = new ToolStripMenuItem();
             DgvLogEvents = new DataGridView();
-            DgcTimestamp = new DataGridViewTextBoxColumn();
-            DgcLevel = new DataGridViewTextBoxColumn();
-            DgcMessage = new DataGridViewTextBoxColumn();
             TlpFilters = new TableLayoutPanel();
             CblExceptions = new CheckBoxList();
             label1 = new Label();
@@ -59,6 +58,10 @@ namespace LogInspector
             statusStrip1 = new StatusStrip();
             LblEventCount = new ToolStripStatusLabel();
             SctSplitter = new SplitContainer();
+            DgcTimestamp = new DataGridViewTextBoxColumn();
+            DgcLevel = new DataGridViewTextBoxColumn();
+            DgcLogger = new DataGridViewTextBoxColumn();
+            DgcMessage = new DataGridViewTextBoxColumn();
             menuStrip1.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)DgvLogEvents).BeginInit();
             TlpFilters.SuspendLayout();
@@ -72,7 +75,7 @@ namespace LogInspector
             // menuStrip1
             // 
             menuStrip1.ImageScalingSize = new Size(24, 24);
-            menuStrip1.Items.AddRange(new ToolStripItem[] { fileToolStripMenuItem, viewToolStripMenuItem, toolStripMenuItem1 });
+            menuStrip1.Items.AddRange(new ToolStripItem[] { fileToolStripMenuItem, viewToolStripMenuItem });
             menuStrip1.Location = new Point(0, 0);
             menuStrip1.Name = "menuStrip1";
             menuStrip1.Padding = new Padding(9, 3, 0, 3);
@@ -82,7 +85,7 @@ namespace LogInspector
             // 
             // fileToolStripMenuItem
             // 
-            fileToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { LoadLogFilesToolStripMenuItem, ExitToolStripMenuItem });
+            fileToolStripMenuItem.DropDownItems.AddRange(new ToolStripItem[] { LoadLogFilesToolStripMenuItem, ReloadCurrentLogFilesToolStripMenuItem, ExitToolStripMenuItem });
             fileToolStripMenuItem.Name = "fileToolStripMenuItem";
             fileToolStripMenuItem.Size = new Size(54, 29);
             fileToolStripMenuItem.Text = "File";
@@ -93,6 +96,13 @@ namespace LogInspector
             LoadLogFilesToolStripMenuItem.Size = new Size(232, 34);
             LoadLogFilesToolStripMenuItem.Text = "Load log files...";
             LoadLogFilesToolStripMenuItem.Click += LoadLogFilesToolStripMenuItem_Click;
+            // 
+            // ReloadCurrentLogFilesToolStripMenuItem
+            // 
+            ReloadCurrentLogFilesToolStripMenuItem.Name = "ReloadCurrentLogFilesToolStripMenuItem";
+            ReloadCurrentLogFilesToolStripMenuItem.Size = new Size(232, 34);
+            ReloadCurrentLogFilesToolStripMenuItem.Text = "Reload";
+            ReloadCurrentLogFilesToolStripMenuItem.Click += ReloadCurrentLogFilesToolStripMenuItem_Click;
             // 
             // ExitToolStripMenuItem
             // 
@@ -122,25 +132,18 @@ namespace LogInspector
             hideFiltersToolStripMenuItem.Text = "Hide Filters";
             hideFiltersToolStripMenuItem.Click += HideFiltersToolStripMenuItem_Click;
             // 
-            // toolStripMenuItem1
-            // 
-            toolStripMenuItem1.Name = "toolStripMenuItem1";
-            toolStripMenuItem1.Size = new Size(36, 29);
-            toolStripMenuItem1.Text = "?";
-            toolStripMenuItem1.Click += ToolStripMenuItem1_Click;
-            // 
             // DgvLogEvents
             // 
             DgvLogEvents.AllowUserToAddRows = false;
             DgvLogEvents.AllowUserToDeleteRows = false;
             DgvLogEvents.AllowUserToResizeRows = false;
             DgvLogEvents.ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.AutoSize;
-            DgvLogEvents.Columns.AddRange(new DataGridViewColumn[] { DgcTimestamp, DgcLevel, DgcMessage });
+            DgvLogEvents.Columns.AddRange(new DataGridViewColumn[] { DgcTimestamp, DgcLevel, DgcLogger, DgcMessage });
             DgvLogEvents.Dock = DockStyle.Fill;
             DgvLogEvents.EditMode = DataGridViewEditMode.EditProgrammatically;
             DgvLogEvents.Location = new Point(0, 0);
             DgvLogEvents.Margin = new Padding(0);
-            DgvLogEvents.MultiSelect = false;
+            DgvLogEvents.MultiSelect = true;
             DgvLogEvents.Name = "DgvLogEvents";
             DgvLogEvents.RowHeadersVisible = false;
             DgvLogEvents.RowHeadersWidth = 62;
@@ -149,37 +152,12 @@ namespace LogInspector
             DgvLogEvents.TabIndex = 1;
             DgvLogEvents.VirtualMode = true;
             DgvLogEvents.CellValueNeeded += DgvLogEvents_CellValueNeeded;
-            // 
-            // DgcTimestamp
-            // 
-            DgcTimestamp.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
-            DgcTimestamp.HeaderText = "Timestamp";
-            DgcTimestamp.MinimumWidth = 8;
-            DgcTimestamp.Name = "DgcTimestamp";
-            DgcTimestamp.ReadOnly = true;
-            DgcTimestamp.Width = 145;
-            // 
-            // DgcLevel
-            // 
-            DgcLevel.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
-            DgcLevel.HeaderText = "Level";
-            DgcLevel.MinimumWidth = 8;
-            DgcLevel.Name = "DgcLevel";
-            DgcLevel.ReadOnly = true;
-            DgcLevel.Width = 80;
-            // 
-            // DgcMessage
-            // 
-            DgcMessage.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
-            DgcMessage.HeaderText = "Message";
-            DgcMessage.MinimumWidth = 8;
-            DgcMessage.Name = "DgcMessage";
-            DgcMessage.ReadOnly = true;
+            DgvLogEvents.CellDoubleClick += DgvLogEvents_CellDoubleClick;
             // 
             // TlpFilters
             // 
-            TlpFilters.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
-            TlpFilters.AutoSize = true;
+            TlpFilters.AutoSize = false;
+            TlpFilters.Dock = DockStyle.Fill;
             TlpFilters.ColumnCount = 5;
             TlpFilters.ColumnStyles.Add(new ColumnStyle());
             TlpFilters.ColumnStyles.Add(new ColumnStyle());
@@ -206,13 +184,12 @@ namespace LogInspector
             TlpFilters.Margin = new Padding(0);
             TlpFilters.Name = "TlpFilters";
             TlpFilters.RowCount = 6;
-            TlpFilters.RowStyles.Add(new RowStyle());
-            TlpFilters.RowStyles.Add(new RowStyle());
-            TlpFilters.RowStyles.Add(new RowStyle());
-            TlpFilters.RowStyles.Add(new RowStyle());
-            TlpFilters.RowStyles.Add(new RowStyle());
-            TlpFilters.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            TlpFilters.RowStyles.Add(new RowStyle(SizeType.Absolute, 33F));
+            TlpFilters.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            TlpFilters.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            TlpFilters.RowStyles.Add(new RowStyle(SizeType.Percent, 25F));
+            TlpFilters.RowStyles.Add(new RowStyle(SizeType.Percent, 25F));
+            TlpFilters.RowStyles.Add(new RowStyle(SizeType.Percent, 25F));
+            TlpFilters.RowStyles.Add(new RowStyle(SizeType.Percent, 25F));
             TlpFilters.Size = new Size(1548, 235);
             TlpFilters.TabIndex = 0;
             // 
@@ -300,9 +277,8 @@ namespace LogInspector
             // 
             // TlpProperties
             // 
-            TlpProperties.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left;
-            TlpProperties.AutoSize = true;
-            TlpProperties.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            TlpProperties.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            TlpProperties.AutoSize = false;
             TlpProperties.ColumnCount = 1;
             TlpProperties.ColumnStyles.Add(new ColumnStyle());
             TlpProperties.GrowStyle = TableLayoutPanelGrowStyle.AddColumns;
@@ -423,6 +399,41 @@ namespace LogInspector
             SctSplitter.SplitterWidth = 13;
             SctSplitter.TabIndex = 5;
             // 
+            // DgcTimestamp
+            // 
+            DgcTimestamp.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+            DgcTimestamp.HeaderText = "Timestamp";
+            DgcTimestamp.MinimumWidth = 8;
+            DgcTimestamp.Name = "DgcTimestamp";
+            DgcTimestamp.ReadOnly = true;
+            DgcTimestamp.Width = 155;
+            // 
+            // DgcLevel
+            // 
+            DgcLevel.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+            DgcLevel.HeaderText = "Level";
+            DgcLevel.MinimumWidth = 8;
+            DgcLevel.Name = "DgcLevel";
+            DgcLevel.ReadOnly = true;
+            DgcLevel.Width = 90;
+            // 
+            // DgcLogger
+            // 
+            DgcLogger.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
+            DgcLogger.HeaderText = "Logger";
+            DgcLogger.MinimumWidth = 8;
+            DgcLogger.Name = "DgcLogger";
+            DgcLogger.ReadOnly = true;
+            DgcLogger.Width = 185;
+            // 
+            // DgcMessage
+            // 
+            DgcMessage.AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill;
+            DgcMessage.HeaderText = "Message";
+            DgcMessage.MinimumWidth = 8;
+            DgcMessage.Name = "DgcMessage";
+            DgcMessage.ReadOnly = true;
+            // 
             // LogInspectorDlg
             // 
             AutoScaleDimensions = new SizeF(10F, 25F);
@@ -456,6 +467,7 @@ namespace LogInspector
         private MenuStrip menuStrip1;
         private ToolStripMenuItem fileToolStripMenuItem;
         private ToolStripMenuItem LoadLogFilesToolStripMenuItem;
+        private ToolStripMenuItem ReloadCurrentLogFilesToolStripMenuItem;
         private ToolStripMenuItem ExitToolStripMenuItem;
         private DataGridView DgvLogEvents;
         private TableLayoutPanel TlpFilters;
@@ -467,9 +479,6 @@ namespace LogInspector
         private DateTimePicker DtpEndTime;
         private StatusStrip statusStrip1;
         private ToolStripStatusLabel LblEventCount;
-        private DataGridViewTextBoxColumn DgcTimestamp;
-        private DataGridViewTextBoxColumn DgcLevel;
-        private DataGridViewTextBoxColumn DgcMessage;
         private CheckBoxList CblLevel;
         private Label label3;
         private CheckBoxList CblMessageTemplate;
@@ -483,6 +492,9 @@ namespace LogInspector
         private CheckBoxList CblExceptions;
         private Label LblExceptions;
         private SplitContainer SctSplitter;
-        private ToolStripMenuItem toolStripMenuItem1;
+        private DataGridViewTextBoxColumn DgcTimestamp;
+        private DataGridViewTextBoxColumn DgcLevel;
+        private DataGridViewTextBoxColumn DgcLogger;
+        private DataGridViewTextBoxColumn DgcMessage;
     }
 }
