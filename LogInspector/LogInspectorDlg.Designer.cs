@@ -35,6 +35,7 @@ namespace LogInspector
             viewToolStripMenuItem = new ToolStripMenuItem();
             showFiltersToolStripMenuItem = new ToolStripMenuItem();
             hideFiltersToolStripMenuItem = new ToolStripMenuItem();
+            toolStripMenuItem1 = new ToolStripMenuItem();
             DgvLogEvents = new DataGridView();
             DgcTimestamp = new DataGridViewTextBoxColumn();
             DgcLevel = new DataGridViewTextBoxColumn();
@@ -58,7 +59,6 @@ namespace LogInspector
             statusStrip1 = new StatusStrip();
             LblEventCount = new ToolStripStatusLabel();
             SctSplitter = new SplitContainer();
-            toolStripMenuItem1 = new ToolStripMenuItem();
             menuStrip1.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)DgvLogEvents).BeginInit();
             TlpFilters.SuspendLayout();
@@ -120,6 +120,13 @@ namespace LogInspector
             hideFiltersToolStripMenuItem.Text = "Hide Filters";
             hideFiltersToolStripMenuItem.Click += HideFiltersToolStripMenuItem_Click;
             // 
+            // toolStripMenuItem1
+            // 
+            toolStripMenuItem1.Name = "toolStripMenuItem1";
+            toolStripMenuItem1.Size = new Size(24, 20);
+            toolStripMenuItem1.Text = "?";
+            toolStripMenuItem1.Click += ToolStripMenuItem1_Click;
+            // 
             // DgvLogEvents
             // 
             DgvLogEvents.AllowUserToAddRows = false;
@@ -138,6 +145,7 @@ namespace LogInspector
             DgvLogEvents.Size = new Size(1117, 295);
             DgvLogEvents.TabIndex = 1;
             DgvLogEvents.VirtualMode = true;
+            DgvLogEvents.CellDoubleClick += DgvLogEvents_CellDoubleClick;
             DgvLogEvents.CellValueNeeded += DgvLogEvents_CellValueNeeded;
             // 
             // DgcTimestamp
@@ -392,13 +400,6 @@ namespace LogInspector
             SctSplitter.SplitterDistance = 176;
             SctSplitter.SplitterWidth = 8;
             SctSplitter.TabIndex = 5;
-            // 
-            // toolStripMenuItem1
-            // 
-            toolStripMenuItem1.Name = "toolStripMenuItem1";
-            toolStripMenuItem1.Size = new Size(24, 20);
-            toolStripMenuItem1.Text = "?";
-            toolStripMenuItem1.Click += ToolStripMenuItem1_Click;
             // 
             // LogInspectorDlg
             // 
